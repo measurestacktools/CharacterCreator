@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Character Creator</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">✨ Character Creator</div>
+  <div class="top-actions">
+    <span id="statusDot" class="dot" title="API key status"></span>
+    <button id="settingsBtn" class="btn ghost">⚙ Settings</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="panel create-panel">
+    <h1>Bring <em>your</em> character to life</h1>
+    <p class="sub">Describe a spark of an idea — we'll shape a full soul around it. Chat with them after.</p>
+    <label>Character concept * <span id="conceptCount" class="count">0/500</span>
+      <textarea id="concept" maxlength="500" placeholder="e.g. A retired star-pirate who runs a noodle stall on a floating city…"></textarea>
+    </label>
+    <div class="grid2">
+      <label>World / setting<input id="world" maxlength="500" placeholder="Floating city of Veyra…" /></label>
+      <label>Genre<input id="genre" maxlength="500" placeholder="Sci-fi, fantasy…" /></label>
+    </div>
+    <label>Personality<input id="personality" maxlength="500" placeholder="Sarcastic but fiercely loyal…" /></label>
+    <label>Powers / skills<input id="powers" maxlength="500" placeholder="Storm-calling, lock-picking…" /></label>
+    <label>Role<input id="role" maxlength="500" placeholder="Reluctant mentor, villain…" /></label>
+    <div class="row">
+      <button id="createBtn" class="btn primary">Create character</button>
+      <button id="regenBtn" class="btn ghost" disabled>↻ Regenerate</button>
+    </div>
+    <div id="createErr" class="err" role="alert"></div>
+  </section>
+
+  <section class="panel sheet-panel">
+    <div id="emptySheet" class="empty">Your character will appear here — give them a concept to begin.</div>
+    <article id="card" class="card hidden">
+      <div class="card-head">
+        <div id="avatar" class="avatar">?</div>
+        <div><h2 id="cName">—</h2><p id="cTag" class="tag"></p></div>
+      </div>
+      <div class="sec"><h3>Appearance</h3><p id="cAppearance"></p></div>
+      <div class="sec"><h3>Personality</h3><p id="cPersonality"></p></div>
+      <div class="sec"><h3>Backstory</h3><p id="cBackstory"></p></div>
+      <div class="sec"><h3>Stats</h3><div id="cStats" class="stats"></div></div>
+      <div class="sec grid2">
+        <div><h3>Abilities</h3><ul id="cAbilities"></ul></div>
+        <div><h3>Weaknesses</h3><ul id="cWeak"></ul></div>
+      </div>
+      <div class="sec grid2">
+        <div><h3>Goals</h3><ul id="cGoals"></ul></div>
+        <div><h3>Catchphrases</h3><ul id="cCatch"></ul></div>
+      </div>
+      <div class="sec"><h3>Relationships</h3><ul id="cRel"></ul></div>
+      <div class="row wrap">
+        <input id="modifyInput" maxlength="1000" placeholder="Modify: e.g. make her older and give her a scar…" />
+        <button id="modifyBtn" class="btn">Apply change</button>
+      </div>
+      <div class="row">
+        <button id="exportBtn" class="btn ghost">⬇ Export .md</button>
+        <button id="copyBtn" class="btn ghost">⧉ Copy</button>
+      </div>
+      <div id="sheetErr" class="err" role="alert"></div>
+    </article>
+  </section>
+
+  <section class="panel chat-panel">
+    <h2>Chat with <span id="chatName">your character</span></h2>
+    <div id="chatLog" class="chatlog"><div class="sys">Create a character first, then say hello.</div></div>
+    <div class="row">
+      <input id="chatInput" maxlength="1000" placeholder="Talk to your character…" />
+      <button id="sendBtn" class="btn primary">Send</button>
+      <button id="resetBtn" class="btn ghost">Reset</button>
+    </div>
+    <div id="chatErr" class="err" role="alert"></div>
+  </section>
+</main>
+
+<div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="API settings">
+  <div class="modal-box">
+    <h2>Groq API key</h2>
+    <p class="sub">Stored in server memory only. Never saved to disk or browser storage.</p>
+    <input id="keyInput" type="password" placeholder="Paste your Groq key" autocomplete="off" />
+    <div class="row">
+      <button id="saveKeyBtn" class="btn primary">Verify &amp; save</button>
+      <button id="clearKeyBtn" class="btn ghost">Forget key</button>
+      <button id="closeSettingsBtn" class="btn ghost">Close</button>
+    </div>
+    <div id="keyMsg" class="msg"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
