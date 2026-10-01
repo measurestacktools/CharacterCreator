@@ -2,6 +2,32 @@
 
 Create **your** character from a spark of an idea, then chat with them in-character.
 
+## Features
+- Guided creation (concept, world, personality, powers, role, genre)
+- Animated character card: stats bars, backstory, catchphrases, relationships
+- In-character chat that keeps personality/background, regenerate, modify, export `.md`, reset
+
+## Requirements
+- Python 3.10+
+- A free Groq API key ([console.groq.com/keys](https://console.groq.com/keys))
+- Internet (AI calls go to Groq)
+
+## Installation
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate | macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+copy .env.example .env   # add GROQ_API_KEY  (or paste the key in Settings later)
+```
+
+## How to use
+1. Describe your concept → **Create** → meet your character card
+2. **Chat** with them, **Modify** traits, **Export** the sheet
+
+## Limitations
+- Single in-memory character + chat history (restart clears it)
+- Needs a Groq key + internet; chat history capped at recent turns
+
 - Stack: Python + FastAPI + vanilla HTML/CSS/JS, port **8012**
 - LLM: OpenAI SDK → `https://api.groq.com/openai/v1`, model `openai/gpt-oss-120b`
 - Key: Settings modal → backend live-verifies (`models.list`), process-global memory only (`DELETE /api/key`); `.env` fallback; `/api/status` presence only; frontend never stores/sends keys.
