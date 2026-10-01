@@ -71,6 +71,12 @@
         <button id="exportBtn" class="btn ghost">⬇ Export .md</button>
         <button id="copyBtn" class="btn ghost">⧉ Copy</button>
       </div>
+      <div class="row">
+        <button id="cardPngBtn" class="btn ghost">⬇ PNG Card</button>
+        <button id="cardJsonBtn" class="btn ghost">⬇ JSON Card</button>
+        <button id="cardImportBtn" class="btn ghost">⬆ Import Card</button>
+        <input id="cardImportInput" type="file" accept=".png,.json,image/png,application/json" class="hidden" />
+      </div>
       <div id="sheetErr" class="err" role="alert"></div>
     </article>
   </section>
@@ -101,6 +107,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

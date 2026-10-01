@@ -12,14 +12,16 @@ Key policy:
 """
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 import re
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from openai import OpenAI, APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError, RateLimitError
 from pydantic import BaseModel, field_validator
@@ -103,8 +105,16 @@ def as_str_list(v: Any, limit: int = 8) -> List[str]:
 
 def normalize_sheet(raw: Dict[str, Any]) -> Dict[str, Any]:
     stats = raw.get("stats") if isinstance(raw.get("stats"), dict) else {}
+    name = str(raw.get("name", "Unnamed")).strip()[:80] or "Unnamed"
+    # Chat/card fields are optional (older sheets / third-party cards may lack
+    # them) — fill deterministic defaults so parsing stays backward-compatible.
+    first_mes = str(raw.get("first_mes", "")).strip()[:1500] or f"Hello. I'm {name}."
+    mes_example = (
+        str(raw.get("mes_example", "")).strip()[:3000]
+        or f"<START>\n{{{{user}}}}: Hello!\n{{{{char}}}}: {first_mes}"
+    )
     norm = {
-        "name": str(raw.get("name", "Unnamed")).strip()[:80] or "Unnamed",
+        "name": name,
         "appearance": str(raw.get("appearance", "")).strip()[:1500] or "Mysterious figure.",
         "personality": str(raw.get("personality", "")).strip()[:1500] or "Complex and intriguing.",
         "backstory": str(raw.get("backstory", "")).strip()[:3000] or "Origins unknown.",
@@ -114,6 +124,11 @@ def normalize_sheet(raw: Dict[str, Any]) -> Dict[str, Any]:
         "catchphrases": as_str_list(raw.get("catchphrases")),
         "relationships": as_str_list(raw.get("relationships")),
         "stats": {k: clamp_stat((stats or {}).get(k, 50)) for k in STAT_KEYS},
+        "first_mes": first_mes,
+        "alternate_greetings": as_str_list(raw.get("alternate_greetings"), limit=4),
+        "mes_example": mes_example,
+        "scenario": str(raw.get("scenario", "")).strip()[:1500],
+        "creator_notes": str(raw.get("creator_notes", "")).strip()[:1500],
     }
     return norm
 
@@ -156,9 +171,15 @@ CREATE_SYSTEM = (
     '"abilities": [str], "weaknesses": [str], "goals": [str], '
     '"catchphrases": [str], "relationships": [str], '
     '"stats": {"strength": 1-100, "intelligence": 1-100, "charisma": 1-100, '
-    '"agility": 1-100, "luck": 1-100, "magic": 1-100}}\n'
+    '"agility": 1-100, "luck": 1-100, "magic": 1-100}, '
+    '"first_mes": str (one in-character opening greeting), '
+    '"alternate_greetings": [str, str] (exactly 2 more distinct in-character greetings), '
+    '"mes_example": str (short example dialogue using {{user}} / {{char}} lines, starting with <START>), '
+    '"scenario": str (1-2 sentence current situation or setting)}\n'
     "Make the character feel unique and personal, grounded in the user's concept. "
-    "2-5 items per list. Stats must be integers 1-100."
+    "2-5 items per list. Stats must be integers 1-100. "
+    "Always include first_mes, alternate_greetings (2 entries), mes_example and scenario; "
+    "older readers ignore unknown keys, so extra keys are safe."
 )
 
 
@@ -215,6 +236,156 @@ def build_markdown(sheet: Dict[str, Any]) -> str:
         lines.append(f"- {k.capitalize()}: {(s.get('stats') or {}).get(k, 50)}/100")
     lines.append("")
     return "\n".join(lines)
+
+
+# ---------- SillyTavern chara_card v2 helpers ----------
+# Spec: PNG with the card JSON stored as a raw (unencoded) string in a tEXt
+# chunk named `chara`, plus plain .json files of the same shape.
+# NOTE: chara_card v3 base64-encodes the JSON before embedding; we implement
+# the v2 string form on export, but accept v3-style base64 on import.
+CARD_SPEC = "chara_card_v2"
+CARD_SPEC_VERSION = "2.0"
+CARD_REQUIRED_DATA_KEYS = [
+    "name", "description", "personality", "scenario", "first_mes",
+    "mes_example", "creator_notes", "system_prompt", "alternate_greetings",
+]
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+CARD_UPLOAD_LIMIT = 10 * 1024 * 1024
+
+
+def slugify(name: str, fallback: str = "character") -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (name or fallback).lower()).strip("-") or fallback
+
+
+def sheet_to_card(sheet: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a chara_card v2 payload from our in-session character sheet."""
+    name = str(sheet.get("name", "Unnamed")).strip() or "Unnamed"
+    abilities = ", ".join(sheet.get("abilities", []) or [])
+    weaknesses = ", ".join(sheet.get("weaknesses", []) or [])
+    goals = ", ".join(sheet.get("goals", []) or [])
+    catchphrases = ", ".join(sheet.get("catchphrases", []) or [])
+    relationships = ", ".join(sheet.get("relationships", []) or [])
+    description = (
+        f"Appearance: {sheet.get('appearance', '')}\n"
+        f"Backstory: {sheet.get('backstory', '')}\n"
+        f"Abilities: {abilities}\n"
+        f"Weaknesses: {weaknesses}"
+    ).strip()
+    personality = str(sheet.get("personality", "") or "").strip()
+    if catchphrases:
+        personality = f"{personality}\nCatchphrases: {catchphrases}".strip()
+    scenario = str(sheet.get("scenario", "") or "").strip() or (
+        f"Goals: {goals}\nRelationships: {relationships}".strip() or "An open roleplay scene."
+    )
+    data = {
+        "name": name,
+        "description": description,
+        "personality": personality or "Complex and intriguing.",
+        "scenario": scenario,
+        "first_mes": str(sheet.get("first_mes", "") or f"Hello. I'm {name}."),
+        "mes_example": str(sheet.get("mes_example", "") or ""),
+        "creator_notes": str(sheet.get("creator_notes", "") or ""),
+        "system_prompt": build_chat_system(sheet),
+        "post_history_instructions": "",
+        "alternate_greetings": list(sheet.get("alternate_greetings", []) or []),
+        "tags": [],
+        "creator": "CharacterCreator",
+        "character_version": "1.0",
+        # Free-form zone per spec: stash the exact sheet so our own cards
+        # round-trip losslessly (description is a merged view otherwise).
+        "extensions": {"character_creator": {"sheet": sheet}},
+    }
+    return {"spec": CARD_SPEC, "spec_version": CARD_SPEC_VERSION, "data": data}
+
+
+def card_data_to_sheet(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert v2 card `data` back to a sheet. Own cards restore exactly via
+    extensions.character_creator.sheet; foreign cards map best-effort."""
+    ext = data.get("extensions") if isinstance(data.get("extensions"), dict) else {}
+    inner = ext.get("character_creator") if isinstance(ext, dict) else None
+    inner_sheet = inner.get("sheet") if isinstance(inner, dict) else None
+    if isinstance(inner_sheet, dict) and str(inner_sheet.get("name", "")).strip():
+        return normalize_sheet(inner_sheet)
+    description = str(data.get("description", "") or "").strip()
+    return normalize_sheet({
+        "name": str(data.get("name", "Unnamed") or "Unnamed"),
+        "appearance": description,
+        "personality": str(data.get("personality", "") or ""),
+        "backstory": str(data.get("scenario", "") or data.get("creator_notes", "") or ""),
+        "abilities": [],
+        "weaknesses": [],
+        "goals": [],
+        "catchphrases": [],
+        "relationships": [],
+        "stats": {},
+        "first_mes": str(data.get("first_mes", "") or ""),
+        "alternate_greetings": data.get("alternate_greetings", []),
+        "mes_example": str(data.get("mes_example", "") or ""),
+        "scenario": str(data.get("scenario", "") or ""),
+        "creator_notes": str(data.get("creator_notes", "") or ""),
+    })
+
+
+def make_card_png(card: Dict[str, Any]) -> bytes:
+    """Render a placeholder portrait and embed the card JSON in a `chara`
+    tEXt chunk (v2 string form). Pillow-only, stdlib font."""
+    from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
+
+    payload = json.dumps(card, ensure_ascii=False)
+    img = Image.new("RGB", (512, 768), (201, 168, 120))  # kraft dossier cover
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([24, 24, 488, 744], outline=(43, 33, 24), width=4)
+    draw.rectangle([40, 40, 472, 728], fill=(244, 234, 211), outline=(43, 33, 24), width=2)
+    name = str((card.get("data") or {}).get("name", "?") or "?")
+    initial = name.strip()[0].upper()
+    font_big = ImageFont.load_default(size=160)
+    font_small = ImageFont.load_default(size=28)
+    draw.text((256, 300), initial, fill=(43, 33, 24), font=font_big, anchor="mm")
+    draw.text((256, 470), name[:24], fill=(90, 76, 58), font=font_small, anchor="mm")
+    draw.text((256, 510), "CASTING DOSSIER · 8012", fill=(163, 53, 43), font=font_small, anchor="mm")
+    info = PngImagePlugin.PngInfo()
+    info.add_text("chara", payload)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", pnginfo=info)
+    return buf.getvalue()
+
+
+def read_chara_chunk(png_bytes: bytes) -> Dict[str, Any]:
+    """Extract the card JSON from a PNG's `chara` chunk (v2 string, with a
+    best-effort v3 base64 fallback)."""
+    from PIL import Image
+
+    try:
+        img = Image.open(io.BytesIO(png_bytes))
+        img.load()
+        raw = img.info.get("chara")
+    except Exception as exc:
+        raise ValueError(f"Could not read PNG: {exc}") from exc
+    if not raw:
+        raise ValueError("PNG has no embedded character card (`chara` chunk missing).")
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return obj
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        pass
+    try:
+        obj = json.loads(base64.b64decode(raw).decode("utf-8"))
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    raise ValueError("Embedded character card is not valid JSON.")
+
+
+def coerce_card_payload(obj: Any) -> Dict[str, Any]:
+    """Accept a full card ({spec, data}) or a bare v2 `data` dict."""
+    if not isinstance(obj, dict):
+        raise ValueError("Character card must be a JSON object.")
+    data = obj.get("data") if isinstance(obj.get("data"), dict) else obj
+    if not isinstance(data, dict) or not str(data.get("name", "")).strip():
+        raise ValueError("Not a valid character card (missing character name).")
+    return data
 
 
 # ---------- request models ----------
@@ -415,6 +586,63 @@ def api_export():
     md = build_markdown(_current_character)
     fname = re.sub(r"[^a-z0-9]+", "-", (_current_character.get("name", "character") or "character").lower()).strip("-") or "character"
     return {"markdown": md, "filename": f"{fname}.md"}
+
+
+@app.get("/api/card/export")
+def api_card_export(format: str = "json"):
+    """Export the current character as a SillyTavern chara_card v2 payload:
+    ?format=json (default) or ?format=png (card embedded in `chara` chunk)."""
+    if not _current_character:
+        return JSONResponse(status_code=404, content={"error": "No character yet. Create one first."})
+    fmt = (format or "json").strip().lower()
+    card = sheet_to_card(_current_character)
+    fname = slugify(_current_character.get("name", "character"))
+    if fmt == "json":
+        return JSONResponse(
+            content=card,
+            headers={"Content-Disposition": f'attachment; filename="{fname}.json"'},
+        )
+    if fmt == "png":
+        try:
+            blob = make_card_png(card)
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse(status_code=502, content={"error": f"Could not render card PNG. ({str(exc)[:120]})"})
+        return Response(
+            content=blob,
+            media_type="image/png",
+            headers={"Content-Disposition": f'attachment; filename="{fname}.png"'},
+        )
+    return JSONResponse(status_code=400, content={"error": "Unknown format. Use ?format=json or ?format=png."})
+
+
+@app.post("/api/card/import")
+async def api_card_import(file: UploadFile = File(...)):
+    """Import a character card (.json card/data, or .png with `chara` chunk)
+    into the session character. Additive: chat history resets."""
+    global _current_character, _chat_history
+    blob = await file.read()
+    if not blob:
+        return JSONResponse(status_code=400, content={"error": "Uploaded file is empty."})
+    if len(blob) > CARD_UPLOAD_LIMIT:
+        return JSONResponse(status_code=400, content={"error": "File too large (10 MB limit)."})
+    fname = (file.filename or "").lower()
+    try:
+        if fname.endswith(".png") or blob[:8] == PNG_MAGIC:
+            data = coerce_card_payload(read_chara_chunk(blob))
+        else:
+            try:
+                text = blob.decode("utf-8")
+            except UnicodeDecodeError:
+                return JSONResponse(status_code=400, content={"error": "Could not read file. Send a .json card or a .png card."})
+            try:
+                data = coerce_card_payload(json.loads(text))
+            except json.JSONDecodeError:
+                return JSONResponse(status_code=400, content={"error": "Invalid JSON. Send a character card (.json) or card PNG."})
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    _current_character = card_data_to_sheet(data)
+    _chat_history = []
+    return {"character": _current_character, "card_name": data.get("name", "")}
 
 
 @app.get("/", include_in_schema=False)

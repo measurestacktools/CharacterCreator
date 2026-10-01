@@ -173,4 +173,44 @@ $("copyBtn").onclick = async () => {
   catch { $("sheetErr").textContent = "Copy failed in this browser."; }
 };
 
+// SillyTavern chara_card v2 export/import (PNG with `chara` chunk, or plain JSON)
+function downloadBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function cardFileName(ext) {
+  const base = (character && character.name ? character.name : "character").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "character";
+  return `${base}.card.${ext}`;
+}
+async function downloadCard(fmt) {
+  if (!character) { $("sheetErr").textContent = "Create a character first."; return; }
+  try {
+    const r = await fetch(`/api/card/export?format=${fmt}`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Export failed (${r.status})`);
+    downloadBlob(await r.blob(), cardFileName(fmt));
+  } catch (e) { showErr("sheetErr", e); }
+}
+$("cardPngBtn").onclick = () => downloadCard("png");
+$("cardJsonBtn").onclick = () => downloadCard("json");
+$("cardImportBtn").onclick = () => $("cardImportInput").click();
+$("cardImportInput").onchange = async (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  clearErr("sheetErr");
+  try {
+    const fd = new FormData();
+    fd.append("file", f, f.name);
+    const r = await fetch("/api/card/import", { method: "POST", body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `Import failed (${r.status})`);
+    renderSheet(d.character);
+    $("chatLog").innerHTML = `<div class="sys">Card filed — say hello to ${esc(d.character.name)}.</div>`;
+    $("sheetErr").textContent = `Imported “${d.character.name}”. Dossier updated.`;
+    setTimeout(() => { if ($("sheetErr").textContent.startsWith("Imported")) $("sheetErr").textContent = ""; }, 3000);
+  } catch (err) { showErr("sheetErr", err); }
+};
+
 refreshStatus();
