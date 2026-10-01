@@ -1,15 +1,19 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="casting-dossier">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>AI Character Creator</title>
-<link rel="stylesheet" href="/static/style.css" />
+<meta name="theme" content="CASTING-DOSSIER-THEME manila kraft casting-office folder" />
+<title>AI Character Creator — Casting Dossier</title>
+<link rel="stylesheet" href="/static/style.css?v=2" />
 </head>
 <body>
+<!-- CASTING-DOSSIER-THEME -->
+<div class="folder-tab">Casting Office · Dossier No. 8012</div>
 <header class="topbar">
-  <div class="brand">✨ Character Creator</div>
+  <div class="brand">Character Creator<small>Casting Dossier · Filed in triplicate</small></div>
   <div class="top-actions">
+    <span class="filestamp">Auditioned</span>
     <span id="statusDot" class="dot" title="API key status"></span>
     <button id="settingsBtn" class="btn ghost">⚙ Settings</button>
   </div>
@@ -17,8 +21,10 @@
 
 <main class="layout">
   <section class="panel create-panel">
+    <div class="paperclip" aria-hidden="true"></div>
     <h1>Bring <em>your</em> character to life</h1>
     <p class="sub">Describe a spark of an idea — we'll shape a full soul around it. Chat with them after.</p>
+    <p><span class="stamp">Form C-12</span> <span class="stamp blue">Type in mono</span></p>
     <label>Character concept * <span id="conceptCount" class="count">0/500</span>
       <textarea id="concept" maxlength="500" placeholder="e.g. A retired star-pirate who runs a noodle stall on a floating city…"></textarea>
     </label>
@@ -42,6 +48,7 @@
       <div class="card-head">
         <div id="avatar" class="avatar">?</div>
         <div><h2 id="cName">—</h2><p id="cTag" class="tag"></p></div>
+        <span class="stamp">Cast</span>
       </div>
       <div class="sec"><h3>Appearance</h3><p id="cAppearance"></p></div>
       <div class="sec"><h3>Personality</h3><p id="cPersonality"></p></div>
@@ -94,6 +101,6 @@
   </div>
 </div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=2"></script>
 </body>
 </html>

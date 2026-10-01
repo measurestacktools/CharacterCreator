@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 let character = null;
+let busyCreate = false, busyChat = false, busyModify = false;
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -34,16 +35,18 @@ function collect() {
 }
 
 async function doCreate() {
+  if (busyCreate) return;
   clearErr("createErr"); clearErr("sheetErr");
   const body = collect();
   if (!body.concept) { $("createErr").textContent = "Give your character a concept first — even one line works."; return; }
-  $("createBtn").disabled = true; $("createBtn").textContent = "Dreaming…";
+  busyCreate = true;
+  $("createBtn").disabled = true; $("regenBtn").disabled = true; $("createBtn").textContent = "Dreaming…";
   try {
     const d = await api("/api/create", { method: "POST", body: JSON.stringify(body) });
     renderSheet(d.character);
     $("chatLog").innerHTML = `<div class="sys">Say hello to ${esc(d.character.name)}.</div>`;
   } catch (e) { showErr("createErr", e); }
-  finally { $("createBtn").disabled = false; $("createBtn").textContent = "Create character"; }
+  finally { busyCreate = false; $("createBtn").disabled = false; $("regenBtn").disabled = !character; $("createBtn").textContent = "Create character"; }
 }
 
 function renderSheet(c) {
@@ -62,7 +65,7 @@ function renderSheet(c) {
     const row = document.createElement("div"); row.className = "stat";
     row.innerHTML = `<span>${esc(k)}</span><div class="bar"><i></i></div><b>${esc(v)}</b>`;
     stats.appendChild(row);
-    requestAnimationFrame(() => requestAnimationFrame(() => { row.querySelector("i").style.width = `${v}%`; }));
+    requestAnimationFrame(() => requestAnimationFrame(() => { row.querySelector("i").style.width = `${Math.max(0, Math.min(100, Number(v) || 0))}%`; }));
   }
   const fill = (id, arr) => { $(id).innerHTML = (arr || []).map((x) => `<li>${esc(x)}</li>`).join("") || "<li>—</li>"; };
   fill("cAbilities", c.abilities); fill("cWeak", c.weaknesses); fill("cGoals", c.goals);
@@ -70,16 +73,20 @@ function renderSheet(c) {
 }
 
 async function doModify() {
+  if (busyModify) return;
   clearErr("sheetErr");
   const ins = $("modifyInput").value.trim();
   if (!ins) { $("sheetErr").textContent = "Describe the change first."; return; }
   if (!character) { $("sheetErr").textContent = "Create a character first."; return; }
-  $("modifyBtn").disabled = true;
+  busyModify = true;
+  $("modifyBtn").disabled = true; $("modifyBtn").textContent = "Applying…";
   try {
     const d = await api("/api/modify", { method: "POST", body: JSON.stringify({ instruction: ins }) });
     renderSheet(d.character); $("modifyInput").value = "";
+    $("sheetErr").textContent = "Change filed in dossier.";
+    setTimeout(() => { if ($("sheetErr").textContent === "Change filed in dossier.") $("sheetErr").textContent = ""; }, 2500);
   } catch (e) { showErr("sheetErr", e); }
-  finally { $("modifyBtn").disabled = false; }
+  finally { busyModify = false; $("modifyBtn").disabled = false; $("modifyBtn").textContent = "Apply change"; }
 }
 
 function toMarkdown(c) {
@@ -98,32 +105,39 @@ function addBubble(who, text) {
 }
 
 async function doChat() {
+  if (busyChat) return;
   clearErr("chatErr");
   const inp = $("chatInput"); const msg = inp.value.trim();
   if (!msg) return;
   if (!character) { $("chatErr").textContent = "Create a character first, then chat."; return; }
+  busyChat = true;
   inp.value = ""; addBubble("user", msg);
-  $("sendBtn").disabled = true;
+  $("sendBtn").disabled = true; $("sendBtn").textContent = "…";
   try {
     const d = await api("/api/chat", { method: "POST", body: JSON.stringify({ message: msg }) });
     addBubble("ai", d.reply);
   } catch (e) { showErr("chatErr", e); }
-  finally { $("sendBtn").disabled = false; }
+  finally { busyChat = false; $("sendBtn").disabled = false; $("sendBtn").textContent = "Send"; $("chatInput").focus(); }
 }
 
 // settings modal — key sent once to backend, never stored in browser
-function openSettings() { $("settingsModal").classList.remove("hidden"); $("keyMsg").textContent = ""; }
+function openSettings() { $("settingsModal").classList.remove("hidden"); $("keyMsg").textContent = ""; $("keyInput").focus(); }
 function closeSettings() { $("settingsModal").classList.add("hidden"); $("keyInput").value = ""; }
 
 $("createBtn").onclick = doCreate;
 $("regenBtn").onclick = doCreate;
 $("modifyBtn").onclick = doModify;
+$("modifyInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doModify(); });
 $("sendBtn").onclick = doChat;
 $("resetBtn").onclick = async () => { await api("/api/reset", { method: "POST" }).catch(() => {}); $("chatLog").innerHTML = '<div class="sys">Conversation reset.</div>'; };
 $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doChat(); });
-$("concept").addEventListener("input", () => { $("conceptCount").textContent = `${$("concept").value.length}/500`; });
+const _updateCount = () => { $("conceptCount").textContent = `${$("concept").value.length}/500`; };
+$("concept").addEventListener("input", _updateCount);
+_updateCount();
 $("settingsBtn").onclick = openSettings;
 $("closeSettingsBtn").onclick = closeSettings;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("settingsModal").classList.contains("hidden")) closeSettings(); });
+$("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("saveKeyBtn").click(); });
 $("settingsModal").addEventListener("click", (e) => { if (e.target.id === "settingsModal") closeSettings(); });
 $("saveKeyBtn").onclick = async () => {
   $("keyMsg").textContent = "Verifying…";
@@ -139,22 +153,23 @@ $("clearKeyBtn").onclick = async () => {
 };
 $("exportBtn").onclick = async () => {
   if (!character) return;
+  const save = (md, name) => {
+    const blob = new Blob([md], { type: "text/markdown" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name || "character.md";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
   try {
     const d = await api("/api/export");
-    const blob = new Blob([d.markdown], { type: "text/markdown" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = d.filename || "character.md"; a.click();
-    URL.revokeObjectURL(a.href);
+    save(d.markdown, d.filename);
   } catch { // offline fallback
-    const blob = new Blob([toMarkdown(character)], { type: "text/markdown" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = "character.md"; a.click();
-    URL.revokeObjectURL(a.href);
+    save(toMarkdown(character), "character.md");
   }
 };
 $("copyBtn").onclick = async () => {
   if (!character) return;
-  try { await navigator.clipboard.writeText(toMarkdown(character)); $("sheetErr").textContent = "Copied to clipboard."; }
+  try { await navigator.clipboard.writeText(toMarkdown(character)); $("sheetErr").textContent = "Copied to clipboard."; setTimeout(() => { if ($("sheetErr").textContent === "Copied to clipboard.") $("sheetErr").textContent = ""; }, 2500); }
   catch { $("sheetErr").textContent = "Copy failed in this browser."; }
 };
 
