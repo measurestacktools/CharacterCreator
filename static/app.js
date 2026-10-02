@@ -98,8 +98,7 @@ function toMarkdown(c) {
   return md;
 }
 
-function addBubble(who, text) {
-  const d = document.createElement("div");
+function addBubble(who, text) {  const d = document.createElement("div");
   d.className = "bubble " + who; d.textContent = text;
   $("chatLog").appendChild(d); $("chatLog").scrollTop = $("chatLog").scrollHeight;
 }
@@ -213,4 +212,34 @@ $("cardImportInput").onchange = async (e) => {
   } catch (err) { showErr("sheetErr", err); }
 };
 
+// Mature (18+) mode — session-only, never persisted (no localStorage)
+function setMatureStamps(on) {
+  for (const id of ["matureStampCreate", "matureStampSheet", "matureStampChat"]) {
+    const el = $(id);
+    if (el) el.classList.toggle("hidden", !on);
+  }
+}
+async function refreshMode() {
+  try {
+    const s = await api("/api/status");
+    const on = !!s.mature;
+    $("matureToggle").checked = on;
+    setMatureStamps(on);
+  } catch { /* ignore */ }
+}
+$("matureToggle").addEventListener("change", async () => {
+  $("modeErr").textContent = "";
+  const want = $("matureToggle").checked;
+  const confirm18 = $("confirm18").checked;
+  try {
+    const d = await api("/api/mode", { method: "POST", body: JSON.stringify({ mature: want, confirm18 }) });
+    setMatureStamps(!!d.mature);
+  } catch (e) {
+    $("matureToggle").checked = false;
+    setMatureStamps(false);
+    $("modeErr").textContent = e.message || "Please confirm you are 18 or older to enable Mature mode.";
+  }
+});
+
 refreshStatus();
+refreshMode();

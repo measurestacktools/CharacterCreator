@@ -36,6 +36,12 @@
     <label>Personality<input id="personality" maxlength="500" placeholder="Sarcastic but fiercely loyal…" /></label>
     <label>Powers / skills<input id="powers" maxlength="500" placeholder="Storm-calling, lock-picking…" /></label>
     <label>Role<input id="role" maxlength="500" placeholder="Reluctant mentor, villain…" /></label>
+    <div class="moderow">
+      <label class="check"><input type="checkbox" id="matureToggle" /> Mature (18+)</label>
+      <label class="check"><input type="checkbox" id="confirm18" /> I confirm I am 18 or older</label>
+      <span id="matureStampCreate" class="stamp red hidden">Mature 18+</span>
+    </div>
+    <div id="modeErr" class="err" role="alert"></div>
     <div class="row">
       <button id="createBtn" class="btn primary">Create character</button>
       <button id="regenBtn" class="btn ghost" disabled>↻ Regenerate</button>
@@ -50,6 +56,7 @@
         <div id="avatar" class="avatar">?</div>
         <div><h2 id="cName">—</h2><p id="cTag" class="tag"></p></div>
         <span class="stamp">Cast</span>
+        <span id="matureStampSheet" class="stamp red hidden">Mature 18+</span>
       </div>
       <div class="sec"><h3>Appearance</h3><p id="cAppearance"></p></div>
       <div class="sec"><h3>Personality</h3><p id="cPersonality"></p></div>
@@ -83,7 +90,7 @@
   </section>
 
   <section class="panel chat-panel">
-    <h2>Chat with <span id="chatName">your character</span></h2>
+    <h2>Chat with <span id="chatName">your character</span> <span id="matureStampChat" class="stamp red hidden">Mature 18+</span></h2>
     <div id="chatLog" class="chatlog"><div class="sys">Create a character first, then say hello.</div></div>
     <div class="row">
       <input id="chatInput" maxlength="1000" placeholder="Talk to your character…" />

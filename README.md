@@ -46,6 +46,12 @@ uvicorn app:app --port 8012
 - `AI returned malformed data` — retry Create/Modify; the sheet normalizer keeps stats 1–100.
 - Port in use — run `uvicorn app:app --port 8012` on a free port.
 
+## Mature mode (18+)
+- Optional toggle on the creation panel ("Mature (18+)" + "I confirm I am 18 or older"). Session-only server flag; cleared on restart, never persisted (no localStorage).
+- `POST /api/mode {"mature":bool,"confirm18":bool}` — enabling requires `confirm18:true`, else `400`. Disabling needs no confirm. `GET /api/status` reports `mature`.
+- When on, creation/chat/modify use a mature system-prompt variant allowing: graphic horror/violence descriptions, crime anti-heroes, moral ambiguity, profanity, adult dark-romance themes (non-explicit, fade-to-black).
+- Hard blocks stay active in BOTH modes and take precedence: explicit sexual content/detail, ANY sexual content involving minors, non-consensual sexual scenarios, real-person sexual content. Blocked inputs get a friendly in-fiction redirect toward non-explicit drama, never a lecture.
+
 ## Test
 ```powershell
 pip install -r requirements-test.txt

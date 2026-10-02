@@ -93,6 +93,10 @@ input:focus,textarea:focus{outline:3px solid var(--stamp-blue);outline-offset:1p
   font-size:11px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;padding:3px 10px;transform:rotate(-4deg);
 }
 .stamp.blue{border-color:var(--stamp-blue);color:var(--stamp-blue);transform:rotate(2deg)}
+.stamp.red{background:var(--stamp);color:var(--paper);border-color:var(--ink)}
+.moderow{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.check{display:inline-flex!important;gap:6px;align-items:center;margin:0!important;font-size:12px}
+.check input{width:auto;margin-top:0}
 .tag{color:var(--ink-soft);font-size:13px;margin:2px 0 0}
 .sec p{font-size:14px;line-height:1.55;margin:4px 0;font-family:Georgia,serif}
 .sec ul{margin:4px 0;padding-left:18px;font-size:14px}

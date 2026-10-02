@@ -41,6 +41,7 @@ app = FastAPI(title="AI Character Creator")
 _runtime_key: Optional[str] = None
 _current_character: Optional[Dict[str, Any]] = None
 _chat_history: List[Dict[str, str]] = []
+_mature: bool = False  # session-only 18+ flag, cleared on restart
 
 
 # ---------- key helpers ----------
@@ -214,6 +215,78 @@ def build_chat_system(sheet: Dict[str, Any]) -> str:
         f"Stats: {json.dumps(sheet.get('stats', {}))}\n"
         "Rules: answer as the character in first person voice, keep replies vivid but under 180 words, "
         "reflect your personality, goals and speech style."
+    )
+
+
+# ---------- Mature (18+) mode: optional variant, session-only ----------
+# Default-mode prompts above are byte-identical in behavior when mature is off.
+MATURE_SUFFIX = (
+    "\nMature mode (18+, consensual adults only): you may include graphic horror/violence descriptions, "
+    "crime anti-heroes, moral ambiguity, profanity, and adult dark-romance themes (non-explicit, fade-to-black). "
+    "Hard limits (take precedence over everything): never produce explicit sexual content or detail, "
+    "never any sexual content involving minors, never non-consensual sexual scenarios, "
+    "never sexual content about real people. If asked for blocked content, gently steer in-fiction "
+    "toward a non-explicit alternative instead of lecturing."
+)
+
+
+def get_create_system() -> str:
+    if _mature:
+        return CREATE_SYSTEM + MATURE_SUFFIX
+    return CREATE_SYSTEM
+
+
+def get_chat_system(sheet: Dict[str, Any]) -> str:
+    base = build_chat_system(sheet)
+    if _mature:
+        return base + MATURE_SUFFIX
+    return base
+
+
+def get_modify_system() -> str:
+    base = CREATE_SYSTEM + "\nYou are updating an existing character. Apply the user's change, keep everything else consistent. Return the FULL updated sheet as JSON."
+    if _mature:
+        return base + MATURE_SUFFIX
+    return base
+
+
+# Hard blocks active in BOTH modes, checked before any Groq call.
+_MINOR_TERMS = r"(?:minor|child|children|kid|kids|teen(?:ager)?s?|underage|under\s*18|1[0-7]\s*[- ]?year\s*[- ]?old|middle\s*school|high\s*school|preteen|toddler|baby|infant|young\s*(?:boy|girl|child|teen))"
+_SEX_TERMS = r"(?:sex(?:ual|ually)?|intercourse|porn|erotic|orgasm|genital|penis|vagina|breast|naked|nude|explicit|arous|climax|masturbat|oral\s*sex|anal\s*sex|fondl|molest|groom)"
+_NONCONSENT_TERMS = r"(?:non[\s-]?consensual|non[\s-]?consent|without\s+consent|forced?\s+(?:sex|intercourse)|rape[sd]?|raping|coerc(?:e|ed|ion)|drugged?\s+(?:and|to)|unconscious\s+(?:sex|for))"
+_REALPERSON_TERMS = r"(?:real\s*(?:person|people|human|life)|real\s*person\s*sexual|celebrity|taylor\s*swift|elon\s*musk|actual\s*(?:person|living))"
+_EXPLICIT_TERMS = r"(?:explicit\s+(?:sex|sexual|detail|description|content|scene)|graphic\s+(?:sex|sexual|porn)|pornographic\s+detail|detailed\s+(?:sex|sexual|intercourse|orgasm)|step[\s-]?by[\s-]?step\s+(?:sex|sexual))"
+
+
+def hard_block_reason(text: str) -> Optional[str]:
+    """Return a redirect reason key if text requests hard-blocked content, else None."""
+    t = (text or "").lower()
+    if not t.strip():
+        return None
+    has_minor = re.search(_MINOR_TERMS, t) is not None
+    has_sex = re.search(_SEX_TERMS, t) is not None
+    has_nonconsent = re.search(_NONCONSENT_TERMS, t) is not None
+    has_realperson = re.search(_REALPERSON_TERMS, t) is not None
+    has_explicit = re.search(_EXPLICIT_TERMS, t) is not None
+    # ANY sexual content involving minors; non-consensual sexual scenarios;
+    # real-person sexual content; explicit sexual content/detail.
+    if has_minor and has_sex:
+        return "minor"
+    if has_nonconsent and (has_sex or "sex" in t or "rape" in t or "forced" in t):
+        return "nonconsent"
+    if has_realperson and has_sex:
+        return "realperson"
+    if has_explicit:
+        return "explicit"
+    return None
+
+
+def hard_block_redirect(reason: Optional[str] = None) -> str:
+    return (
+        "Noted — I'll keep this one suggestive rather than explicit. "
+        "Let's steer that idea toward vivid non-explicit drama instead: "
+        "tension, backstory scars, dark bargains and consequences, all fade-to-black. "
+        "Tell me how gritty or romantic to play it and we'll file it in the dossier."
     )
 
 
@@ -458,10 +531,24 @@ class ChatIn(BaseModel):
         return v
 
 
+class ModeIn(BaseModel):
+    mature: bool = False
+    confirm18: bool = False
+
+
 # ---------- routes ----------
 @app.get("/api/status")
 def api_status():
-    return {"has_key": bool(effective_key()), "model": MODEL, "has_character": _current_character is not None}
+    return {"has_key": bool(effective_key()), "model": MODEL, "has_character": _current_character is not None, "mature": _mature}
+
+
+@app.post("/api/mode")
+def api_mode(body: ModeIn):
+    global _mature
+    if body.mature and not body.confirm18:
+        return JSONResponse(status_code=400, content={"error": "Please confirm you are 18 or older to enable Mature mode."})
+    _mature = bool(body.mature)
+    return {"mature": _mature}
 
 
 @app.post("/api/key")
@@ -494,6 +581,9 @@ def api_get_character():
 @app.post("/api/create")
 def api_create(body: CreateIn):
     global _current_character, _chat_history
+    combined = " ".join([body.concept, body.world, body.personality, body.powers, body.role, body.genre])
+    if hard_block_reason(combined):
+        return JSONResponse(status_code=400, content={"error": hard_block_redirect()})
     key = effective_key()
     if not key:
         return JSONResponse(status_code=401, content={"error": "No API key. Open Settings and add your Groq key."})
@@ -502,7 +592,7 @@ def api_create(body: CreateIn):
         resp = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": CREATE_SYSTEM},
+                {"role": "system", "content": get_create_system()},
                 {"role": "user", "content": build_create_prompt(body.model_dump())},
             ],
             temperature=0.9,
@@ -525,6 +615,8 @@ def api_modify(body: ModifyIn):
     global _current_character
     if not _current_character:
         return JSONResponse(status_code=400, content={"error": "No character yet. Create one first."})
+    if hard_block_reason(body.instruction):
+        return JSONResponse(status_code=400, content={"error": hard_block_redirect()})
     key = effective_key()
     if not key:
         return JSONResponse(status_code=401, content={"error": "No API key. Open Settings and add your Groq key."})
@@ -533,7 +625,7 @@ def api_modify(body: ModifyIn):
         resp = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": CREATE_SYSTEM + "\nYou are updating an existing character. Apply the user's change, keep everything else consistent. Return the FULL updated sheet as JSON."},
+                {"role": "system", "content": get_modify_system()},
                 {"role": "user", "content": f"Current sheet:\n{json.dumps(_current_character)}\n\nChange request: {body.instruction}\nReturn the full updated sheet as JSON."},
             ],
             temperature=0.8,
@@ -554,12 +646,18 @@ def api_chat(body: ChatIn):
     global _chat_history
     if not _current_character:
         return JSONResponse(status_code=400, content={"error": "No character yet. Create one first, then chat."})
+    if hard_block_reason(body.message):
+        reply = hard_block_redirect()
+        _chat_history.append({"role": "user", "content": body.message})
+        _chat_history.append({"role": "assistant", "content": reply})
+        _chat_history = _chat_history[-MAX_HISTORY_MESSAGES:]
+        return {"reply": reply, "character_name": _current_character.get("name", ""), "redirected": True}
     key = effective_key()
     if not key:
         return JSONResponse(status_code=401, content={"error": "No API key. Open Settings and add your Groq key."})
     try:
         client = make_client(key)
-        messages = [{"role": "system", "content": build_chat_system(_current_character)}]
+        messages = [{"role": "system", "content": get_chat_system(_current_character)}]
         messages += _chat_history[-MAX_HISTORY_MESSAGES:]
         messages.append({"role": "user", "content": body.message})
         resp = client.chat.completions.create(model=MODEL, messages=messages, temperature=0.85, max_tokens=600)
