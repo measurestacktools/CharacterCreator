@@ -39,6 +39,13 @@ uvicorn app:app --port 8012
 # open http://127.0.0.1:8012
 ```
 
+## Troubleshooting
+- `No API key` — open Settings (⚙) and paste a Groq key, or set `GROQ_API_KEY` in `.env`.
+- `Invalid API key` — the key is rejected by Groq; generate a fresh one at console.groq.com/keys.
+- `Groq rate limit hit` — free-tier pacing; wait ~30s and retry.
+- `AI returned malformed data` — retry Create/Modify; the sheet normalizer keeps stats 1–100.
+- Port in use — run `uvicorn app:app --port 8012` on a free port.
+
 ## Test
 ```powershell
 pip install -r requirements-test.txt

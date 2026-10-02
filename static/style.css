@@ -115,4 +115,5 @@ input:focus,textarea:focus{outline:3px solid var(--stamp-blue);outline-offset:1p
 .modal-box{background:var(--paper);border:3px solid var(--ink);border-radius:3px;padding:20px;width:min(420px,92vw);box-shadow:6px 6px 0 rgba(0,0,0,.5)}
 .paperclip{position:absolute;top:-16px;left:24px;width:14px;height:44px;border:3px solid #6f6f6f;border-bottom:none;border-radius:8px 8px 0 0;background:transparent}
 @media(max-width:1100px){.layout{grid-template-columns:1fr 1fr}.chat-panel{grid-column:1/-1}}
-@media(max-width:760px){.layout{grid-template-columns:1fr}.chatlog{height:320px}.topbar{position:static}}
+@media(max-width:760px){.layout{grid-template-columns:1fr}.chatlog{height:320px}.topbar{position:static;flex-wrap:wrap}}
+@media(max-width:420px){.filestamp{display:none}.brand{font-size:15px}.topbar{padding:10px 12px}}
