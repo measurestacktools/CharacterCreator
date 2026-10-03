@@ -53,7 +53,14 @@ function renderSheet(c) {
   character = c;
   $("emptySheet").classList.add("hidden"); $("card").classList.remove("hidden");
   $("regenBtn").disabled = false;
-  $("avatar").textContent = (c.name || "?").trim().charAt(0).toUpperCase() || "?";
+  const initial = (c.name || "?").trim().charAt(0).toUpperCase() || "?";
+  $("avatarFallback").textContent = initial;
+  const img = $("avatarImg"), loading = $("avatarLoading");
+  img.classList.add("hidden"); img.removeAttribute("src");
+  loading.classList.remove("hidden");
+  img.onload = () => { loading.classList.add("hidden"); img.classList.remove("hidden"); };
+  img.onerror = () => { img.classList.add("hidden"); loading.classList.add("hidden"); };
+  img.src = `/api/portrait?t=${Date.now()}`;
   $("cName").textContent = c.name || "Unnamed";
   $("chatName").textContent = c.name || "your character";
   $("cTag").textContent = [collect().genre, collect().role].filter(Boolean).join(" · ");

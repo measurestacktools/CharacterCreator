@@ -13,11 +13,14 @@ Key policy:
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional
+import urllib.parse
+import urllib.request
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile
@@ -42,6 +45,11 @@ _runtime_key: Optional[str] = None
 _current_character: Optional[Dict[str, Any]] = None
 _chat_history: List[Dict[str, str]] = []
 _mature: bool = False  # session-only 18+ flag, cleared on restart
+# Portrait cache: raw image bytes for the current sheet only (memory only,
+# cleared on restart / new character / import / modify).
+_portrait_bytes: Optional[bytes] = None
+_portrait_media: str = "image/jpeg"
+_portrait_key: Optional[str] = None
 
 
 # ---------- key helpers ----------
@@ -288,6 +296,81 @@ def hard_block_redirect(reason: Optional[str] = None) -> str:
         "tension, backstory scars, dark bargains and consequences, all fade-to-black. "
         "Tell me how gritty or romantic to play it and we'll file it in the dossier."
     )
+
+
+# ---------- Character portraits (Pollinations.ai, keyless) ----------
+PORTRAIT_WIDTH = 512
+PORTRAIT_HEIGHT = 768
+PORTRAIT_MODEL = "flux"
+PORTRAIT_TIMEOUT = 45
+
+
+def portrait_seed(name: str) -> int:
+    """Deterministic seed: stable sha256 of the lowercased name (same name → same face)."""
+    digest = hashlib.sha256((name or "unnamed").strip().lower().encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") % 2147483647
+
+
+def _clean_snippet(text: str, limit: int) -> str:
+    t = re.sub(r"\s+", " ", (text or "").strip())
+    return t[:limit].strip(" ,;:")
+
+
+def build_portrait_prompt(sheet: Dict[str, Any]) -> str:
+    """Short portrait prompt from sheet fields: appearance + vibe + setting."""
+    name = str(sheet.get("name", "Unnamed")).strip()[:60] or "Unnamed"
+    appearance = _clean_snippet(str(sheet.get("appearance", "")), 180)
+    scenario = _clean_snippet(str(sheet.get("scenario", "")), 100)
+    parts = [f"portrait of {name}"]
+    if appearance:
+        parts.append(appearance)
+    if scenario:
+        parts.append(f"setting: {scenario}")
+    parts.append("cinematic painted portrait, casting dossier photo, head-and-shoulders")
+    prompt = re.sub(r"\s+", " ", ", ".join(parts)).strip()
+    return prompt[:400]
+
+
+def sheet_portrait_block_text(sheet: Dict[str, Any]) -> str:
+    return " ".join([
+        str(sheet.get("name", "")),
+        str(sheet.get("appearance", "")),
+        str(sheet.get("personality", "")),
+        str(sheet.get("backstory", "")),
+        str(sheet.get("scenario", "")),
+        " ".join(sheet.get("abilities", []) or []),
+    ])
+
+
+def clear_portrait_cache() -> None:
+    global _portrait_bytes, _portrait_media, _portrait_key
+    _portrait_bytes = None
+    _portrait_media = "image/jpeg"
+    _portrait_key = None
+
+
+def portrait_url(prompt: str, seed: int) -> str:
+    q = urllib.parse.quote(prompt, safe="")
+    return (
+        f"https://image.pollinations.ai/prompt/{q}"
+        f"?width={PORTRAIT_WIDTH}&height={PORTRAIT_HEIGHT}"
+        f"&nologo=true&model={PORTRAIT_MODEL}&seed={seed}"
+    )
+
+
+def fetch_portrait_bytes(prompt: str, seed: int, timeout: int = PORTRAIT_TIMEOUT) -> Tuple[bytes, str]:
+    """Fetch portrait from Pollinations.ai with stdlib urllib. Raises on any failure."""
+    url = portrait_url(prompt, seed)
+    req = urllib.request.Request(url, headers={"User-Agent": "CharacterCreator/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        status = getattr(resp, "status", 200)
+        if status != 200:
+            raise ValueError(f"Portrait upstream returned {status}")
+        media = (resp.headers.get_content_type() if resp.headers else "") or "image/jpeg"
+        data = resp.read()
+    if not data:
+        raise ValueError("Portrait upstream returned empty body")
+    return data, media
 
 
 def build_markdown(sheet: Dict[str, Any]) -> str:
@@ -607,6 +690,7 @@ def api_create(body: CreateIn):
         return groq_error_response(exc)
     _current_character = sheet
     _chat_history = []
+    clear_portrait_cache()
     return {"character": sheet}
 
 
@@ -634,11 +718,43 @@ def api_modify(body: ModifyIn):
         )
         text = (resp.choices[0].message.content or "").strip()
         _current_character = normalize_sheet(parse_json_defensive(text))
+        clear_portrait_cache()
     except ValueError as exc:
         return JSONResponse(status_code=502, content={"error": str(exc)})
     except Exception as exc:  # noqa: BLE001
         return groq_error_response(exc)
     return {"character": _current_character}
+
+
+@app.get("/api/portrait")
+def api_portrait():
+    """Lazy AI portrait for the current sheet (Pollinations.ai, keyless).
+
+    First hit fetches upstream and caches bytes in process memory; later hits
+    serve the cache. ANY failure → 404 JSON so the frontend falls back silently.
+    Sheets tripping the hard-block filter never trigger a fetch.
+    """
+    global _portrait_bytes, _portrait_media, _portrait_key
+    if not _current_character:
+        return JSONResponse(status_code=404, content={"error": "No character yet. Create one first."})
+    sheet = _current_character
+    if hard_block_reason(sheet_portrait_block_text(sheet)):
+        return JSONResponse(status_code=404, content={"error": "Portrait unavailable for this character."})
+    prompt = build_portrait_prompt(sheet)
+    if hard_block_reason(prompt):
+        return JSONResponse(status_code=404, content={"error": "Portrait unavailable for this character."})
+    seed = portrait_seed(str(sheet.get("name", "Unnamed")))
+    key = f"{seed}:{prompt}"
+    if _portrait_bytes and _portrait_key == key:
+        return Response(content=_portrait_bytes, media_type=_portrait_media)
+    try:
+        data, media = fetch_portrait_bytes(prompt, seed)
+    except Exception:  # noqa: BLE001 — timeout, non-200, empty, network: silent fallback
+        return JSONResponse(status_code=404, content={"error": "Portrait unavailable. Showing initial instead."})
+    _portrait_bytes = data
+    _portrait_media = media or "image/jpeg"
+    _portrait_key = key
+    return Response(content=data, media_type=_portrait_media)
 
 
 @app.post("/api/chat")
@@ -740,6 +856,7 @@ async def api_card_import(file: UploadFile = File(...)):
         return JSONResponse(status_code=400, content={"error": str(exc)})
     _current_character = card_data_to_sheet(data)
     _chat_history = []
+    clear_portrait_cache()
     return {"character": _current_character, "card_name": data.get("name", "")}
 
 

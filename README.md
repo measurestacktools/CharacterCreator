@@ -66,3 +66,9 @@ pytest -q
 - `POST /api/chat {message}` — in-character reply (needs sheet)
 - `POST /api/reset` — clear conversation
 - `GET /api/character`, `GET /api/export` — markdown download
+- `GET /api/portrait` — AI portrait for the current sheet (lazy, cached)
+
+## Character portraits
+- Portraits are generated free via [Pollinations.ai](https://image.pollinations.ai) — no key needed.
+- Prompt is built short from the sheet (`portrait of <name>, <appearance>, setting: <scenario>, … dossier photo style`); seed is a stable sha256 hash of the character name, so the same character always gets the same face.
+- Image bytes are cached in server memory only (cleared on restart / new character / import); any fetch failure (timeout 45s, non-200, empty) returns a clean `404` JSON and the card falls back to the name initial.
